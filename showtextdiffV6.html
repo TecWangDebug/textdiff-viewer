@@ -1,0 +1,682 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Diff Master v6.0 (Auto-Switch & Sync Control)</title>
+    <style>
+        :root {
+            --bg-body: #f4f6f8; --bg-panel: #ffffff; --border: #d0d7de;
+            --text-main: #24292f; --text-sub: #57606a; --primary: #0969da;
+            --del-bg: #ffebe9; --del-text: #cf222e;
+            --ins-bg: #dafbe1; --ins-text: #1a7f37;
+            --hl-focus: #fffbdd;
+        }
+
+        [data-theme="dark"] {
+            --bg-body: #0d1117; --bg-panel: #161b22; --border: #30363d;
+            --text-main: #c9d1d9; --text-sub: #8b949e; --primary: #58a6ff;
+            --del-bg: #4b1a1f; --del-text: #ff7b72;
+            --ins-bg: #153621; --ins-text: #3fb950;
+            --hl-focus: #4e4012;
+        }
+
+        * { box-sizing: border-box; outline: none; }
+        body { margin: 0; height: 100vh; display: flex; flex-direction: column; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; background: var(--bg-body); color: var(--text-main); overflow: hidden; }
+
+        /* Header */
+        header { height: 50px; background: var(--bg-panel); border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; padding: 0 15px; z-index: 10; }
+        h1 { font-size: 16px; margin: 0; font-weight: 600; display: flex; align-items: center; gap: 8px; }
+        .toolbar { display: flex; gap: 8px; align-items: center; }
+
+        .btn { padding: 4px 10px; border: 1px solid var(--border); background: var(--bg-panel); border-radius: 4px; cursor: pointer; font-size: 12px; color: var(--text-main); display: flex; align-items: center; gap: 4px; transition: all 0.2s; user-select: none; }
+        .btn:hover { background: var(--bg-body); border-color: var(--primary); transform: translateY(-1px); box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        .btn:active { transform: translateY(0); box-shadow: none; }
+        .btn.active { background: rgba(9, 105, 218, 0.1); border-color: var(--primary); color: var(--primary); font-weight: 600; }
+        
+        .toggle-group { display: flex; background: var(--bg-body); border: 1px solid var(--border); border-radius: 4px; padding: 2px; }
+        .toggle-opt { padding: 3px 10px; cursor: pointer; border-radius: 3px; font-size: 12px; color: var(--text-sub); transition: all 0.2s; }
+        .toggle-opt.active { background: var(--bg-panel); color: var(--text-main); font-weight: 600; box-shadow: 0 1px 2px rgba(0,0,0,0.1); }
+
+        /* Layout */
+        .container { display: flex; flex: 1; overflow: hidden; }
+        .input-col { flex: 4; display: flex; flex-direction: column; border-right: 1px solid var(--border); background: var(--bg-panel); min-width: 300px; }
+        .output-col { flex: 5; display: flex; flex-direction: column; background: var(--bg-panel); min-width: 300px; }
+
+        /* Input Boxes */
+        .input-wrapper { flex: 1; position: relative; display: flex; flex-direction: column; }
+        .input-wrapper:first-child { border-bottom: 1px solid var(--border); }
+        .label {
+            position: absolute; top: 0; left: 0; right: 0; height: 24px; background: var(--bg-body); border-bottom: 1px solid var(--border);
+            display: flex; justify-content: space-between; align-items: center; padding: 0 10px;
+            font-size: 11px; font-weight: 700; color: var(--text-sub); z-index: 5; pointer-events: none;
+        }
+        .action-link { pointer-events: auto; cursor: pointer; color: var(--primary); }
+        
+        textarea {
+            flex: 1; width: 100%; border: none; resize: none; padding: 30px 10px 10px 10px;
+            font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace; font-size: 12px; line-height: 1.5;
+            color: var(--text-main); background: var(--bg-panel);
+        }
+        
+        /* Drag Overlay */
+        .drag-overlay {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(9, 105, 218, 0.05);
+            display: none; align-items: center; justify-content: center; font-size: 14px; color: var(--primary); font-weight: bold; pointer-events: none; z-index: 10;
+        }
+        .input-wrapper.drag-over .drag-overlay { display: flex; }
+
+        /* Output & Status */
+        .status-bar { height: 32px; background: var(--bg-body); border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; padding: 0 10px; font-size: 12px; color: var(--text-sub); }
+        #diff-view { flex: 1; padding: 0; overflow-y: auto; font-family: "SFMono-Regular", Consolas, Menlo, monospace; font-size: 12px; line-height: 1.6; white-space: pre-wrap; word-break: break-all; position: relative; }
+        
+        /* 行样式 */
+        .diff-line { display: flex; min-height: 1.6em; }
+        .diff-line-content { flex: 1; padding: 0 15px; }
+        .diff-line.has-change { background: rgba(9, 105, 218, 0.02); }
+        
+        /* 折叠上下文 */
+        .context-fold { 
+            text-align: center; padding: 5px 0; cursor: pointer; 
+            background: var(--bg-body); color: var(--text-sub); 
+            border-top: 1px solid var(--border); border-bottom: 1px solid var(--border);
+            font-size: 11px; user-select: none;
+            transition: all 0.2s;
+        }
+        .context-fold:hover { background: var(--bg-panel); color: var(--primary); }
+        .context-fold.collapsed { border-top: none; }
+        .context-lines { overflow: hidden; transition: max-height 0.3s ease; }
+        .context-lines.collapsed { max-height: 0; }
+        
+        del { background: var(--del-bg); color: var(--del-text); text-decoration: line-through; border-bottom: 1px solid rgba(255,0,0,0.1); }
+        ins { background: var(--ins-bg); color: var(--ins-text); text-decoration: none; border-bottom: 1px solid rgba(0,255,0,0.1); }
+        .highlight-focus { background: var(--hl-focus); box-shadow: 0 0 0 2px var(--hl-focus); border-radius: 2px; }
+        
+        /* 选项组样式 */
+        .options-group { display: flex; gap: 8px; align-items: center; }
+        .option-checkbox { display: flex; align-items: center; gap: 4px; cursor: pointer; font-size: 11px; color: var(--text-sub); }
+        .option-checkbox input[type="checkbox"] { cursor: pointer; }
+        .option-checkbox:hover { color: var(--text-main); }
+        .empty-tip { color: #8c959f; text-align: center; margin-top: 20%; }
+        .error-msg { color: #cf222e; background: #ffebe9; padding: 10px; border-radius: 6px; border: 1px solid rgba(207,34,46,0.2); text-align: center; margin-top: 20px; }
+
+        /* Print */
+        @media print {
+            body { height: auto; overflow: visible; background: #fff; }
+            header, .input-col, .status-bar { display: none !important; }
+            .container, .output-col, #diff-view { display: block; height: auto; overflow: visible; width: 100%; border: none; }
+            #diff-view { padding: 0; }
+        }
+    </style>
+</head>
+<body>
+
+<header>
+    <h1>⚖️ Diff Master v6</h1>
+    <div class="toolbar">
+        <button class="btn" id="syncBtn" onclick="App.toggleSync()" title="开启/关闭滚动同步">🔗 同步滚动</button>
+        <div style="width:1px; height:16px; background:var(--border); margin:0 4px;"></div>
+        <div class="toggle-group" id="modeSwitch">
+            <div class="toggle-opt active" data-mode="char">逐字</div>
+            <div class="toggle-opt" data-mode="smart">智能</div>
+        </div>
+        <div style="width:1px; height:16px; background:var(--border); margin:0 4px;"></div>
+        <div class="options-group">
+            <label class="option-checkbox" title="忽略空白字符">
+                <input type="checkbox" id="ignoreWhitespace" onchange="App.run('manual')">
+                <span>忽略空白</span>
+            </label>
+            <label class="option-checkbox" title="忽略大小写">
+                <input type="checkbox" id="ignoreCase" onchange="App.run('manual')">
+                <span>忽略大小写</span>
+            </label>
+        </div>
+        <div style="width:1px; height:16px; background:var(--border); margin:0 4px;"></div>
+        <button class="btn" id="foldContextBtn" onclick="App.toggleFoldContext()" title="折叠/展开未变更内容">📦 折叠上下文</button>
+        <button class="btn" onclick="App.toggleTheme()" title="切换主题">🌓 主题</button>
+        <button class="btn" onclick="App.clearAll()" title="清空全部">🗑️ 重置</button>
+    </div>
+</header>
+
+<div class="container">
+    <div class="input-col">
+        <div class="input-wrapper" id="dropZoneOld">
+            <div class="label">
+                <span>原文 (拖拽文件)</span>
+                <span class="action-link" onclick="App.clear('old')">清空</span>
+            </div>
+            <div class="drag-overlay">📂 释放文件以读取</div>
+            <textarea id="oldText" spellcheck="false" placeholder="粘贴或拖入文件..."></textarea>
+        </div>
+        <div class="input-wrapper" id="dropZoneNew">
+            <div class="label">
+                <span>修改后 (拖拽文件)</span>
+                <span class="action-link" onclick="App.clear('new')">清空</span>
+            </div>
+            <div class="drag-overlay">📂 释放文件以读取</div>
+            <textarea id="newText" spellcheck="false" placeholder="粘贴或拖入文件..."></textarea>
+        </div>
+    </div>
+
+    <div class="output-col">
+        <div class="status-bar">
+            <div id="statsInfo">准备就绪</div>
+            <div style="display:flex; gap:4px;">
+                <button class="btn" onclick="App.navDiff(-1)">▲</button>
+                <button class="btn" onclick="App.navDiff(1)">▼</button>
+            </div>
+        </div>
+        <div id="diff-view"><div class="empty-tip">等待输入...</div></div>
+    </div>
+</div>
+
+<script>
+const App = {
+    mode: 'char', // 默认模式
+    syncEnabled: false, // 默认不开启同步
+    ignoreWhitespace: false, // 忽略空白字符
+    ignoreCase: false, // 忽略大小写
+    foldContextEnabled: false, // 是否折叠未变更上下文
+    contextLines: 3, // 上下文行数
+    
+    diffChunks: [],
+    currentChunkIdx: -1,
+    timer: null,
+    isSyncing: false, // 防止滚动同步循环
+    // 阈值：1.5亿 (约等于 12000字 x 12000字)，超过则警告或自动降级
+    MAX_CHAR_COMPLEXITY: 150000000,
+    // 最大文件大小：10MB
+    MAX_FILE_SIZE: 10 * 1024 * 1024, 
+    
+    init() {
+        this.dom = {
+            old: document.getElementById('oldText'),
+            new: document.getElementById('newText'),
+            view: document.getElementById('diff-view'),
+            stats: document.getElementById('statsInfo'),
+            modeSwitch: document.getElementById('modeSwitch'),
+            syncBtn: document.getElementById('syncBtn'),
+            foldContextBtn: document.getElementById('foldContextBtn'),
+            ignoreWhitespace: document.getElementById('ignoreWhitespace'),
+            ignoreCase: document.getElementById('ignoreCase')
+        };
+
+        // 绑定输入事件（防抖）
+        // 这里传递 'input' 标记，表示是自动触发的，允许自动降级
+        ['input', 'change'].forEach(e => {
+            this.dom.old.addEventListener(e, () => this.scheduleRun('input'));
+            this.dom.new.addEventListener(e, () => this.scheduleRun('input'));
+        });
+
+        // 拖拽支持
+        this.setupDrag('dropZoneOld', 'oldText');
+        this.setupDrag('dropZoneNew', 'newText');
+
+        // 三窗口同步滚动
+        const syncAll = (src) => {
+            if (!this.syncEnabled || this.isSyncing) return;
+            // 移动端使用 pointer-events 检查，桌面端使用 hover
+            const isActive = src.matches(':hover') || 
+                            (window.matchMedia('(pointer: fine)').matches && document.activeElement === src) ||
+                            src.matches(':focus-within');
+            if (isActive) {
+                this.isSyncing = true;
+                const pct = src.scrollTop / (src.scrollHeight - src.clientHeight || 1);
+                
+                // 同步到其他两个窗口
+                const targets = [this.dom.old, this.dom.new, this.dom.view].filter(t => t !== src);
+                targets.forEach(target => {
+                    target.scrollTop = pct * (target.scrollHeight - target.clientHeight || 1);
+                });
+                
+                requestAnimationFrame(() => { this.isSyncing = false; });
+            }
+        };
+        this.dom.old.addEventListener('scroll', () => syncAll(this.dom.old));
+        this.dom.new.addEventListener('scroll', () => syncAll(this.dom.new));
+        this.dom.view.addEventListener('scroll', () => syncAll(this.dom.view));
+
+        // 模式切换
+        this.dom.modeSwitch.querySelectorAll('.toggle-opt').forEach(el => {
+            el.addEventListener('click', (e) => {
+                // 手动点击切换模式
+                const newMode = e.target.dataset.mode;
+                this.setMode(newMode);
+                // 强制立即执行，且标记为 'manual'，表示用户强制要求该模式
+                this.run('manual');
+            });
+        });
+
+        // 自动深色模式
+        if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
+            this.toggleTheme();
+        }
+    },
+
+    setupDrag(zoneId, inputId) {
+        const zone = document.getElementById(zoneId);
+        const input = document.getElementById(inputId);
+        
+        zone.addEventListener('dragover', (e) => { e.preventDefault(); zone.classList.add('drag-over'); });
+        zone.addEventListener('dragleave', () => zone.classList.remove('drag-over'));
+        zone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            zone.classList.remove('drag-over');
+            const file = e.dataTransfer.files[0];
+            if (!file) return;
+            
+            // 检查文件大小
+            if (file.size > this.MAX_FILE_SIZE) {
+                this.dom.stats.innerText = `文件过大 (${(file.size / 1024 / 1024).toFixed(1)}MB)，最大支持 10MB`;
+                this.dom.view.innerHTML = `<div class="error-msg">⚠️ 文件过大，无法加载。<br>文件大小: ${(file.size / 1024 / 1024).toFixed(1)}MB，最大支持: ${(this.MAX_FILE_SIZE / 1024 / 1024)}MB</div>`;
+                return;
+            }
+            
+            // 检查是否为文本文件（可选：仅提示，不强制）
+            const textTypes = ['text/', 'application/json', 'application/xml', 'application/javascript'];
+            const isTextFile = textTypes.some(t => file.type.startsWith(t)) || 
+                             !file.type || // 无类型也允许
+                             file.name.match(/\.(txt|md|js|json|xml|html|css|py|java|c|cpp|h|hpp|log|csv|tsv|sh|bat|cmd|ps1)$/i);
+            
+            if (!isTextFile) {
+                // 非文本文件给出警告，但允许尝试读取
+                this.dom.stats.innerText = '⚠️ 检测到非文本文件，可能无法正确显示';
+            }
+            
+            const reader = new FileReader();
+            reader.onerror = () => {
+                this.dom.view.innerHTML = `<div class="error-msg">❌ 文件读取失败: ${reader.error?.message || '未知错误'}</div>`;
+                this.dom.stats.innerText = '文件读取失败';
+            };
+            reader.onload = (ev) => {
+                try {
+                    input.value = ev.target.result;
+                    this.run('input'); // 拖拽视为自动输入
+                } catch (err) {
+                    this.dom.view.innerHTML = `<div class="error-msg">❌ 处理文件时出错: ${err.message}</div>`;
+                    this.dom.stats.innerText = '处理失败';
+                }
+            };
+            reader.readAsText(file);
+        });
+    },
+
+    toggleSync() {
+        this.syncEnabled = !this.syncEnabled;
+        if (this.syncEnabled) {
+            this.dom.syncBtn.classList.add('active');
+            this.dom.syncBtn.innerHTML = '🔗 同步开启';
+        } else {
+            this.dom.syncBtn.classList.remove('active');
+            this.dom.syncBtn.innerHTML = '🔗 同步滚动';
+        }
+    },
+    
+    toggleFoldContext() {
+        this.foldContextEnabled = !this.foldContextEnabled;
+        if (this.foldContextEnabled) {
+            this.dom.foldContextBtn.classList.add('active');
+            this.dom.foldContextBtn.innerHTML = '📦 折叠开启';
+        } else {
+            this.dom.foldContextBtn.classList.remove('active');
+            this.dom.foldContextBtn.innerHTML = '📦 折叠上下文';
+        }
+        // 重新渲染以应用折叠
+        const text1 = this.dom.old.value;
+        const text2 = this.dom.new.value;
+        if (text1 && text2) {
+            this.run('manual');
+        }
+    },
+
+    setMode(mode) {
+        this.mode = mode;
+        this.dom.modeSwitch.querySelectorAll('.toggle-opt').forEach(o => {
+            if (o.dataset.mode === mode) o.classList.add('active');
+            else o.classList.remove('active');
+        });
+    },
+
+    clear(target) {
+        if(target === 'old') this.dom.old.value = '';
+        if(target === 'new') this.dom.new.value = '';
+        this.dom.view.innerHTML = '<div class="empty-tip">已清空，等待输入...</div>';
+        this.dom.stats.innerText = '已清空';
+    },
+
+    clearAll() {
+        this.dom.old.value = '';
+        this.dom.new.value = '';
+        this.dom.view.innerHTML = '<div class="empty-tip">等待输入...</div>';
+        this.dom.stats.innerText = '准备就绪';
+        this.diffChunks = [];
+        this.currentChunkIdx = -1;
+    },
+
+    toggleTheme() {
+        const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+        document.documentElement.setAttribute('data-theme', isDark ? 'light' : 'dark');
+    },
+
+    scheduleRun(source) {
+        this.dom.stats.innerText = '正在输入...';
+        clearTimeout(this.timer);
+        this.timer = setTimeout(() => this.run(source), 500);
+    },
+
+    run(source = 'input') {
+        // 更新选项状态
+        this.ignoreWhitespace = this.dom.ignoreWhitespace.checked;
+        this.ignoreCase = this.dom.ignoreCase.checked;
+        
+        let text1 = this.dom.old.value;
+        let text2 = this.dom.new.value;
+        
+        // 应用对比选项
+        if (this.ignoreWhitespace) {
+            text1 = text1.replace(/\s+/g, ' ').trim();
+            text2 = text2.replace(/\s+/g, ' ').trim();
+        }
+        if (this.ignoreCase) {
+            text1 = text1.toLowerCase();
+            text2 = text2.toLowerCase();
+        }
+
+        if (!text1 && !text2) {
+            this.dom.view.innerHTML = '<div class="empty-tip">等待输入...</div>';
+            this.dom.stats.innerText = '准备就绪';
+            return;
+        }
+        if (!text1 || !text2) {
+            this.dom.stats.innerText = '等待另一个文件...';
+            return;
+        }
+
+        // --- 修复：使用分词后的长度进行准确检查 ---
+        // 如果是自动触发 ('input')，且文本过长，且当前是 'char' 模式 -> 自动切为 'smart'
+        // 如果是手动触发 ('manual')，不切，让它撞墙报错
+        let estimatedCost;
+        if (this.mode === 'char') {
+            // char模式下，tokens数量等于字符数量
+            estimatedCost = text1.length * text2.length;
+        } else {
+            // smart模式下，需要先分词估算
+            const tokens1 = this.tokenize(text1);
+            const tokens2 = this.tokenize(text2);
+            estimatedCost = tokens1.length * tokens2.length;
+        }
+        
+        if (source === 'input' && this.mode === 'char' && estimatedCost > this.MAX_CHAR_COMPLEXITY) {
+            this.setMode('smart'); // 自动切到 UI 和 逻辑
+            this.dom.stats.innerText = '文本过长，已自动切换为智能模式';
+            // 继续执行，此时已变成 smart 模式
+        } else {
+            this.dom.stats.innerText = '计算中...';
+        }
+
+        setTimeout(() => {
+            try {
+                this._performDiff(text1, text2);
+            } catch (e) {
+                console.error(e);
+                const errorMsg = e.message || String(e);
+                const errorStack = e.stack ? `<br><small style="opacity:0.7; font-size:11px;">${e.stack.split('\n')[0]}</small>` : '';
+                this.dom.view.innerHTML = `<div class="error-msg">❌ 发生错误: ${this.escapeHtml(errorMsg)}${errorStack}</div>`;
+                this.dom.stats.innerText = `错误: ${errorMsg.substring(0, 30)}...`;
+            }
+        }, 10);
+    },
+
+    _performDiff(text1, text2) {
+        // 分词
+        const tokens1 = this.tokenize(text1);
+        const tokens2 = this.tokenize(text2);
+        const complexity = tokens1.length * tokens2.length;
+
+        // --- 逻辑升级：手动模式下的熔断提示 ---
+        // 如果用户强行切到 Char，但长度依然超标，则报错
+        if (complexity > this.MAX_CHAR_COMPLEXITY) {
+            const modeText = this.mode === 'char' ? '逐字对比' : '智能对比';
+            this.dom.view.innerHTML = `
+                <div class="error-msg">
+                    ⚠️ 文本过长，无法进行${modeText}。<br>
+                    <span style="font-size:12px; opacity:0.8">当前运算量: ${(complexity / 1000000).toFixed(1)}M (阈值: ${this.MAX_CHAR_COMPLEXITY/1000000}M)</span><br>
+                    <span style="font-size:11px; opacity:0.7">Token数量: ${tokens1.length.toLocaleString()} × ${tokens2.length.toLocaleString()}</span><br><br>
+                    ${this.mode === 'char' ? `<button class="btn" style="margin:0 auto" onclick="App.setMode('smart'); App.run('manual')">切换回智能模式</button>` : ''}
+                </div>
+            `;
+            this.dom.stats.innerText = '计算中止：文本过长';
+            return;
+        }
+
+        // 内存使用警告（但不阻止执行）
+        const estimatedMemoryMB = (complexity * 4) / 1024 / 1024;
+        if (estimatedMemoryMB > 50) {
+            this.dom.stats.innerText = `计算中... (预计内存: ${estimatedMemoryMB.toFixed(0)}MB)`;
+        }
+
+        const diffs = this.computeLCS_Optimized(tokens1, tokens2);
+        // 传递原始文本用于统计和行号显示
+        this.render(diffs, this.dom.old.value, this.dom.new.value);
+    },
+
+    tokenize(text) {
+        // 如果忽略空白，在分词时也要考虑
+        if (this.mode === 'char') {
+            const chars = text.split('');
+            if (this.ignoreWhitespace) {
+                return chars.filter(c => c.trim().length > 0);
+            }
+            return chars;
+        }
+        // 改进的正则：支持更多Unicode字符
+        // 匹配：英文数字单词、中日韩字符、其他Unicode字母、空白、其他字符
+        const tokens = text.match(/([a-zA-Z0-9_]+)|([\u4e00-\u9fff\u3040-\u309f\u30a0-\u30ff\uac00-\ud7af])|([\p{L}\p{M}]+)|(\s+)|([^\p{L}\p{M}\s]+)/gu) || [];
+        if (this.ignoreWhitespace) {
+            return tokens.filter(t => t.trim().length > 0);
+        }
+        return tokens;
+    },
+
+    computeLCS_Optimized(arr1, arr2) {
+        const m = arr1.length;
+        const n = arr2.length;
+        const dp = new Uint32Array((m + 1) * (n + 1));
+
+        for (let i = 1; i <= m; i++) {
+            for (let j = 1; j <= n; j++) {
+                const currentIdx = i * (n + 1) + j;
+                if (arr1[i - 1] === arr2[j - 1]) {
+                    const diagIdx = (i - 1) * (n + 1) + (j - 1);
+                    dp[currentIdx] = dp[diagIdx] + 1;
+                } else {
+                    const upIdx = (i - 1) * (n + 1) + j;
+                    const leftIdx = i * (n + 1) + (j - 1);
+                    dp[currentIdx] = Math.max(dp[upIdx], dp[leftIdx]);
+                }
+            }
+        }
+
+        const diffs = [];
+        let i = m, j = n;
+        while (i > 0 || j > 0) {
+            const currentIdx = i * (n + 1) + j;
+            if (i > 0 && j > 0 && arr1[i - 1] === arr2[j - 1]) {
+                diffs.push({ t: 'eq', v: arr1[i - 1] });
+                i--; j--;
+            } else {
+                const upIdx = (i - 1) * (n + 1) + j;
+                const leftIdx = i * (n + 1) + (j - 1);
+                if (j > 0 && (i === 0 || dp[leftIdx] >= dp[upIdx])) {
+                    diffs.push({ t: 'ins', v: arr2[j - 1] });
+                    j--;
+                } else {
+                    diffs.push({ t: 'del', v: arr1[i - 1] });
+                    i--;
+                }
+            }
+        }
+        return diffs.reverse();
+    },
+
+    escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    },
+
+    render(diffs, text1, text2) {
+        let html = '';
+        let chunkIndex = 0;
+        this.diffChunks = [];
+        let lastType = null;
+        let buffer = '';
+        
+        // 统计信息
+        let delChunks = 0;
+        let insChunks = 0;
+        let delChars = 0;
+        let insChars = 0;
+
+        const escape = (text) => text.replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#039;'}[m]));
+
+        const flush = (type, val) => {
+            if (!val) return;
+            const safe = escape(val);
+            
+            if (type === 'eq') {
+                html += `<span>${safe}</span>`;
+            } else {
+                const id = `diff-${chunkIndex++}`;
+                this.diffChunks.push(id);
+                if (type === 'del') {
+                    delChunks++;
+                    delChars += val.length;
+                    html += `<del id="${id}">${safe}</del>`;
+                } else {
+                    insChunks++;
+                    insChars += val.length;
+                    html += `<ins id="${id}">${safe}</ins>`;
+                }
+            }
+        };
+
+        // 构建基础diff HTML
+        diffs.forEach(d => {
+            if (d.t !== lastType && lastType !== null) {
+                flush(lastType, buffer);
+                buffer = '';
+            }
+            lastType = d.t;
+            buffer += d.v;
+        });
+        flush(lastType, buffer);
+
+        // 按行分割HTML（简化方法：按\n分割）
+        const htmlLines = html.split('\n');
+
+        // 构建输出（支持手动折叠未变更内容）
+        const resultLines = [];
+        let contextBuffer = [];
+        let contextStart = -1;
+        const foldThreshold = this.contextLines * 2;
+
+        htmlLines.forEach((lineHtml, idx) => {
+            const hasChange = lineHtml.includes('<del') || lineHtml.includes('<ins');
+            const isPureContext = !hasChange && lineHtml.trim() !== '';
+            
+            if (isPureContext) {
+                contextBuffer.push({ html: lineHtml, idx });
+                if (contextStart < 0) contextStart = idx;
+            } else {
+                // 有变更或空行，处理上下文
+                if (this.foldContextEnabled && contextBuffer.length > foldThreshold && contextStart >= 0) {
+                    // 需要折叠上下文（默认折叠）
+                    const contextId = `context-${contextStart}-${idx - 1}`;
+                    const contextHtml = contextBuffer.map(l => {
+                        return `<div class="diff-line"><div class="diff-line-content">${l.html || '&nbsp;'}</div></div>`;
+                    }).join('');
+                    
+                    resultLines.push(
+                        `<div class="context-fold collapsed" onclick="this.classList.toggle('collapsed'); this.nextElementSibling.classList.toggle('collapsed')">
+                            <span>⋯ ${contextBuffer.length} 行未变更内容（点击展开）</span>
+                        </div>
+                        <div class="context-lines collapsed" id="${contextId}">${contextHtml}</div>`
+                    );
+                    contextBuffer = [];
+                    contextStart = -1;
+                } else if (contextBuffer.length > 0) {
+                    // 直接显示上下文（默认显示）
+                    contextBuffer.forEach(l => {
+                        resultLines.push(`<div class="diff-line"><div class="diff-line-content">${l.html || '&nbsp;'}</div></div>`);
+                    });
+                    contextBuffer = [];
+                    contextStart = -1;
+                }
+
+                // 添加当前行
+                const lineClass = hasChange ? 'has-change' : '';
+                resultLines.push(`<div class="diff-line ${lineClass}"><div class="diff-line-content">${lineHtml || '&nbsp;'}</div></div>`);
+            }
+        });
+
+        // 处理剩余上下文
+        if (this.foldContextEnabled && contextBuffer.length > foldThreshold && contextStart >= 0) {
+            const contextId = `context-${contextStart}-${htmlLines.length - 1}`;
+            const contextHtml = contextBuffer.map(l => {
+                return `<div class="diff-line"><div class="diff-line-content">${l.html || '&nbsp;'}</div></div>`;
+            }).join('');
+            
+            resultLines.push(
+                `<div class="context-fold collapsed" onclick="this.classList.toggle('collapsed'); this.nextElementSibling.classList.toggle('collapsed')">
+                    <span>⋯ ${contextBuffer.length} 行未变更内容（点击展开）</span>
+                </div>
+                <div class="context-lines collapsed" id="${contextId}">${contextHtml}</div>`
+            );
+        } else if (contextBuffer.length > 0) {
+            contextBuffer.forEach(l => {
+                resultLines.push(`<div class="diff-line"><div class="diff-line-content">${l.html || '&nbsp;'}</div></div>`);
+            });
+        }
+
+        this.dom.view.innerHTML = resultLines.join('') || '<div class="empty-tip">无差异</div>';
+        this.currentChunkIdx = -1;
+        
+        // 计算修改前后的字数
+        const oldChars = this.dom.old.value.length;
+        const newChars = this.dom.new.value.length;
+        const totalChanges = delChunks + insChunks;
+        
+        if (totalChanges === 0) {
+            this.dom.stats.innerText = `✅ 文本完全一致 (${oldChars.toLocaleString()} 字)`;
+        } else {
+            const statsParts = [
+                `${totalChanges} 处变更`,
+                `删除 ${delChunks} 处 (${delChars.toLocaleString()} 字)`,
+                `插入 ${insChunks} 处 (${insChars.toLocaleString()} 字)`,
+                `修改前 ${oldChars.toLocaleString()} 字`,
+                `修改后 ${newChars.toLocaleString()} 字`
+            ];
+            this.dom.stats.innerText = statsParts.join(' | ');
+        }
+    },
+
+    navDiff(dir) {
+        if (!this.diffChunks.length) return;
+        this.currentChunkIdx += dir;
+        if (this.currentChunkIdx < 0) this.currentChunkIdx = this.diffChunks.length - 1;
+        if (this.currentChunkIdx >= this.diffChunks.length) this.currentChunkIdx = 0;
+
+        const el = document.getElementById(this.diffChunks[this.currentChunkIdx]);
+        if (el) {
+            document.querySelectorAll('.highlight-focus').forEach(e => e.classList.remove('highlight-focus'));
+            el.classList.add('highlight-focus');
+            el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+    }
+};
+
+App.init();
+</script>
+</body>
+</html>
